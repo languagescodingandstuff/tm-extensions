@@ -6,14 +6,14 @@
   const SKIP_KEYWORDS = ['reason', 'think', 'chain', 'cot', 'reasoning', 'thinking'];
   const COT_CLASS = 'border-l-2';
 
-  // Preserve text containing non-Latin scripts (CJK, Japanese, Korean,
-  // Arabic, Cyrillic, Devanagari, Thai, Hangul, etc.) so meaning is never lost.
   function hasProtectedScript(text) {
     return /[\u0400-\u04FF\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\u0900-\u097F\u0E00-\u0E7F\u1100-\u11FF\u3040-\u30FF\u3400-\u4DBF\u4E00-\u9FFF\uAC00-\uD7AF]/.test(text);
   }
 
-  // Convert em dashes and horizontal bars. Paired dashes become parentheses;
-  // a lone (unpaired) dash becomes a colon if space-surrounded, else a space.
+  function isWord(ch) {
+    return ch !== undefined && ch !== null && /[A-Za-z0-9]/.test(ch);
+  }
+
   function convertDashes(text) {
     const chars = [...text];
     const total = chars.filter(c => c === '—' || c === '―').length;
@@ -28,26 +28,35 @@
           const after = chars[i + 1];
           out.push((before === ' ' && after === ' ') ? ': ' : ' ');
         } else if (dashCount % 2 === 1) {
+          if (out.length && isWord(out[out.length - 1])) out.push(' ');
           out.push('(');
         } else {
           if (out.length && out[out.length - 1] === ' ') out.pop();
           out.push(')');
+          const nxt = chars[i + 1];
+          if (isWord(nxt)) out.push(' ');
         }
       } else {
+        if (c === ' ' && out.length && out[out.length - 1] === '(') continue;
         out.push(c);
       }
     }
     return out.join('');
   }
 
+  const REL_CLAUSE = /^\s*(which|who|whom|whose|that|where|when|after|before|because|although|while|though|if|whether)\b/i;
+
+  function stripOxford(text) {
+    return text.replace(/,\s+([^,]+),\s+(and|or)\s+([^,]+)/g, (m, x, conj, y) => {
+      if (REL_CLAUSE.test(x)) return m;
+      return ', ' + x + ' ' + conj + ' ' + y;
+    });
+  }
+
   function cleanText(text) {
     if (!text || hasProtectedScript(text)) return text;
     text = convertDashes(text);
-    // Conservative Oxford-comma strip (English only, by conjunction match)
-    text = text.replace(
-      /,(\s+)([A-Za-z0-9][\w'-]*),(\s+)(and|or)\s+([A-Za-z0-9][\w'-]*)/g,
-      (_, s1, a, s2, conj, b) => `,${s1}${a}${s2}${conj} ${b}`
-    );
+    text = stripOxford(text);
     return text.replace(/ {2,}/g, ' ');
   }
 
