@@ -12,14 +12,37 @@
     return /[\u0400-\u04FF\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\u0900-\u097F\u0E00-\u0E7F\u1100-\u11FF\u3040-\u30FF\u3400-\u4DBF\u4E00-\u9FFF\uAC00-\uD7AF]/.test(text);
   }
 
+  // Convert em dashes and horizontal bars. Paired dashes become parentheses;
+  // a lone (unpaired) dash becomes a colon if space-surrounded, else a space.
+  function convertDashes(text) {
+    const chars = [...text];
+    const total = chars.filter(c => c === '—' || c === '―').length;
+    let dashCount = 0;
+    const out = [];
+    for (let i = 0; i < chars.length; i++) {
+      const c = chars[i];
+      if (c === '—' || c === '―') {
+        dashCount++;
+        if (dashCount === total && total % 2 === 1) {
+          const before = chars[i - 1];
+          const after = chars[i + 1];
+          out.push((before === ' ' && after === ' ') ? ': ' : ' ');
+        } else if (dashCount % 2 === 1) {
+          out.push('(');
+        } else {
+          if (out.length && out[out.length - 1] === ' ') out.pop();
+          out.push(')');
+        }
+      } else {
+        out.push(c);
+      }
+    }
+    return out.join('');
+  }
+
   function cleanText(text) {
     if (!text || hasProtectedScript(text)) return text;
-    // Convert only em dash and horizontal bar (en dash and minus are preserved)
-    text = text.replace(/[—―]/g, (m, offset, str) => {
-      const before = str[offset - 1];
-      const after = str[offset + 1];
-      return (before === ' ' && after === ' ') ? ': ' : ' ';
-    });
+    text = convertDashes(text);
     // Conservative Oxford-comma strip (English only, by conjunction match)
     text = text.replace(
       /,(\s+)([A-Za-z0-9][\w'-]*),(\s+)(and|or)\s+([A-Za-z0-9][\w'-]*)/g,
