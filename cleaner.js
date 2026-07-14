@@ -1,24 +1,26 @@
 // TypingMind Extension: clean the assistant's FINAL response only.
-// Skips chain-of-thought, tool usage and code blocks.
+// Skips chain-of-thought, tool usage, code blocks and non-Latin scripts.
 (function () {
-  // Verified from the TypingMind DOM: assistant replies use response-block.
   const ASSISTANT_SELECTOR = '[data-element-id="response-block"]';
 
-  // Keywords that mark reasoning / chain-of-thought / thinking elements.
   const SKIP_KEYWORDS = ['reason', 'think', 'chain', 'cot', 'reasoning', 'thinking'];
-
-  // TypingMind renders the chain-of-thought block with this class.
   const COT_CLASS = 'border-l-2';
 
+  // Preserve text containing non-Latin scripts (CJK, Japanese, Korean,
+  // Arabic, Cyrillic, Devanagari, Thai, Hangul, etc.) so meaning is never lost.
+  function hasProtectedScript(text) {
+    return /[\u0400-\u04FF\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\u0900-\u097F\u0E00-\u0E7F\u1100-\u11FF\u3040-\u30FF\u3400-\u4DBF\u4E00-\u9FFF\uAC00-\uD7AF]/.test(text);
+  }
+
   function cleanText(text) {
-    if (!text) return text;
-    // Normalize em/en/horizontal-bar/minus to a colon (if spaced) or space
-    text = text.replace(/[—–―−]/g, (m, offset, str) => {
+    if (!text || hasProtectedScript(text)) return text;
+    // Convert only em dash and horizontal bar (en dash and minus are preserved)
+    text = text.replace(/[—―]/g, (m, offset, str) => {
       const before = str[offset - 1];
       const after = str[offset + 1];
       return (before === ' ' && after === ' ') ? ': ' : ' ';
     });
-    // Conservative Oxford-comma strip: only the final comma of a series
+    // Conservative Oxford-comma strip (English only, by conjunction match)
     text = text.replace(
       /,(\s+)([A-Za-z0-9][\w'-]*),(\s+)(and|or)\s+([A-Za-z0-9][\w'-]*)/g,
       (_, s1, a, s2, conj, b) => `,${s1}${a}${s2}${conj} ${b}`
@@ -30,9 +32,9 @@
     let el = node.parentElement;
     while (el) {
       const tag = el.tagName;
-      if (tag === 'CODE' || tag === 'PRE' || tag === 'BUTTON') return true; // code, tool output, tool calls
+      if (tag === 'CODE' || tag === 'PRE' || tag === 'BUTTON') return true;
       const cls = (el.className || '').split(/\s+/);
-      if (cls.indexOf(COT_CLASS) !== -1) return true; // chain-of-thought
+      if (cls.indexOf(COT_CLASS) !== -1) return true;
       const hay = (el.className + ' ' + (el.id || '') + ' ' +
         (el.getAttribute ? (el.getAttribute('data-element-id') || '') : '')).toLowerCase();
       if (SKIP_KEYWORDS.some(k => hay.includes(k))) return true;
@@ -49,11 +51,10 @@
     for (const node of nodes) {
       if (shouldSkip(node)) continue;
       const cleaned = cleanText(node.nodeValue);
-      if (cleaned !== node.nodeValue) node.nodeValue = cleaned; // idempotent
+      if (cleaned !== node.nodeValue) node.nodeValue = cleaned;
     }
   }
 
-  // Debounce per message so we only act after streaming settles
   const timers = new WeakMap();
   function schedule(msgEl) {
     if (timers.has(msgEl)) clearTimeout(timers.get(msgEl));
