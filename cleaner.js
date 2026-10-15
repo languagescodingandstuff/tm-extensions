@@ -1,3 +1,5 @@
+// v5.01 hotfix: fixed SKIP_KEYWORDWORDS typo in shouldSkip (a ReferenceError that
+// disabled the extension entirely) and added a full-pipeline test harness.
 // TypingMind Extension: clean the assistant's FINAL response only.
 // Skips chain-of-thought, tool usage, code blocks, blockquotes and non-Latin scripts.
 //
@@ -200,7 +202,7 @@
       const cls = (el.className || '').split(/\s+/);
       if (cls.indexOf(COT_CLASS) !== -1) return true;
       const hay = (el.className + ' ' + (el.id || '') + ' ' + (el.getAttribute ? (el.getAttribute('data-element-id') || '') : '')).toLowerCase();
-      if (SKIP_KEYWORDWORDS.some(k => hay.includes(k))) return true;
+      if (SKIP_KEYWORDS.some(k => hay.includes(k))) return true;
       el = el.parentElement;
     }
     return false;
