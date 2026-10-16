@@ -1,3 +1,6 @@
+// v5.02: scope gate — only prose under ai-response is processed. user-message
+//        bubbles, thinking blocks and all other UI are never touched (v5.01
+//        and v4 processed user bubbles because the gate was response-block only).
 // v5.01 hotfix: fixed SKIP_KEYWORDWORDS typo in shouldSkip (a ReferenceError that
 // disabled the extension entirely) and added a full-pipeline test harness.
 // TypingMind Extension: clean the assistant's FINAL response only.
@@ -16,7 +19,8 @@
 //       preserved as an en dash; unicode-aware word check; literal "( text )"
 //       spacing in the source is no longer altered
 (function () {
-  const ASSISTANT_SELECTOR = '[data-element-id="response-block"]';
+  const MESSAGE_BLOCK_ID = 'response-block';
+  const AI_CONTENT_ID = 'ai-response';
   const SKIP_KEYWORDS = ['reason', 'think', 'chain', 'cot', 'reasoning', 'thinking'];
   const COT_CLASS = 'border-l-2';
 
@@ -230,11 +234,35 @@
     timers.set(msgEl, setTimeout(() => processElement(msgEl), 600));
   }
 
+  // Role gate (v5.02): walk up from the mutated element; the first ancestor
+  // carrying a data-element-id decides the role. Assistant prose lives inside
+  // ai-response (within a per-message response-block wrapper); user bubbles
+  // carry user-message, thoughts carry thinking-block, and every other UI
+  // node carries its own id. Only ai-response qualifies; everything else is
+  // ignored (default-deny).
+  function findAssistantBlock(el) {
+    while (el) {
+      const id = el.getAttribute ? el.getAttribute('data-element-id') : null;
+      if (id) {
+        if (id !== AI_CONTENT_ID) return null;
+        let up = el.parentElement;
+        while (up) {
+          const upId = up.getAttribute ? up.getAttribute('data-element-id') : null;
+          if (upId === MESSAGE_BLOCK_ID) return up;
+          up = up.parentElement;
+        }
+        return el;
+      }
+      el = el.parentElement;
+    }
+    return null;
+  }
+
   const observer = new MutationObserver((mutations) => {
     for (const mut of mutations) {
       let el = mut.target;
       if (el.nodeType === Node.TEXT_NODE) el = el.parentElement;
-      const msg = (el && el.closest) ? el.closest(ASSISTANT_SELECTOR) : null;
+      const msg = (el && el.getAttribute) ? findAssistantBlock(el) : null;
       if (msg) schedule(msg);
     }
   });
