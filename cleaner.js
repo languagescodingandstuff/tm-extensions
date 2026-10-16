@@ -1,3 +1,8 @@
+// v5.03: block-aware pairing — dashes in different paragraphs/headings/list
+//        items/table cells can no longer pair across block boundaries (the
+//        previous message-wide concat glued blocks together without sentence
+//        punctuation, producing stray and unclosed parentheses); tight
+//        compound en dashes (IT–management) are preserved as-is.
 // v5.02: scope gate — only prose under ai-response is processed. user-message
 //        bubbles, thinking blocks and all other UI are never touched (v5.01
 //        and v4 processed user bubbles because the gate was response-block only).
@@ -23,6 +28,14 @@
   const AI_CONTENT_ID = 'ai-response';
   const SKIP_KEYWORDS = ['reason', 'think', 'chain', 'cot', 'reasoning', 'thinking'];
   const COT_CLASS = 'border-l-2';
+
+  // Text nodes separated only by these tags live in the same block; anything
+  // else (paragraphs, headings, list items, table cells, unknown wrappers)
+  // starts a new block for dash-pairing purposes.
+  const INLINE_TAGS = new Set(['SPAN', 'STRONG', 'EM', 'B', 'I', 'U', 'S', 'INS',
+    'DEL', 'CODE', 'A', 'ABBR', 'CITE', 'DATA', 'MARK', 'SMALL', 'SUB', 'SUP',
+    'TIME', 'LABEL', 'Q', 'VAR', 'SAMP', 'KBD', 'FONT', 'BIG', 'NOBR', 'WBR',
+    'RUBY', 'RT', 'RB', 'OUTPUT']);
 
   const DASH_RE = /[—–―]/;
   const SENTENCE_END = /[.!?…]/;
@@ -60,11 +73,19 @@
     return ch !== undefined && ch !== null && /[\p{L}\p{N}]/u.test(ch);
   }
 
+  // Nearest non-inline ancestor of a text node's parent: two text nodes share
+  // a block iff this returns the same element.
+  function blockAnchor(node) {
+    let el = node.parentElement;
+    while (el && INLINE_TAGS.has(el.tagName)) el = el.parentElement;
+    return el;
+  }
+
   // Decide for every dash in 'text' whether it opens / closes a parenthetical
   // pair or stands alone. Pairing scope is a single sentence, so two
   // independent dashes in different sentences can never be fused together,
   // and a leftover odd dash becomes "A: B" punctuation.
-  function planDashes(text) {
+  function planDashes(text, extraBounds) {
     const chars = text.split('');
     const plan = new Map();
 
@@ -73,6 +94,12 @@
     const idxs = [];
     for (let i = 0; i < chars.length; i++) {
       if (!DASH_RE.test(chars[i])) continue;
+      // tight compound en dashes (IT–management, e–mail) are legitimate
+      // typography, not AI dashes: never pair with them, never convert them
+      const prevC = chars[i - 1], nextC = chars[i + 1];
+      if (chars[i].codePointAt(0) === 0x2013 &&
+          prevC !== undefined && nextC !== undefined &&
+          !WS.test(prevC) && !WS.test(nextC)) continue;
       let p = i - 1;
       while (p >= 0 && WS.test(chars[p])) p--;
       let n = i + 1;
@@ -90,6 +117,12 @@
       let j = i + 1;
       while (j < chars.length && CLOSERS.test(chars[j])) j++;
       if (j >= chars.length || WS.test(chars[j])) bounds.push(j);
+    }
+
+    // forced boundaries between blocks
+    if (extraBounds && extraBounds.length) {
+      for (const b of extraBounds) bounds.push(b);
+      bounds.sort((a, b) => a - b);
     }
 
     // segment id per dash
@@ -132,7 +165,7 @@
   // texts: prose text nodes of one assistant message, document order, already
   // filtered (no code/pre/button/blockquote/reasoning, no protected script).
   // Returns the cleaned string for each node.
-  function cleanMessageTexts(texts) {
+  function cleanMessageTexts(texts, anchors) {
     if (!texts.length) return [];
 
     const full = texts.join('');
@@ -140,7 +173,17 @@
     let off = 0;
     for (const t of texts) { starts.push(off); off += t.length; }
 
-    const plan = planDashes(full);
+    // Block boundaries: a new block always starts a new sentence segment, so
+    // dashes in unrelated blocks (list items, table cells, headings) can never
+    // pair with each other. Nodes sharing a block (inline splits) may pair.
+    const blockBreaks = [];
+    if (anchors && anchors.length === texts.length) {
+      for (let k = 1; k < texts.length; k++) {
+        if (anchors[k] !== anchors[k - 1]) blockBreaks.push(starts[k]);
+      }
+    }
+
+    const plan = planDashes(full, blockBreaks);
     const outputs = [];
     let openPending = false;
 
@@ -155,8 +198,8 @@
       for (let i = 0; i < original.length; i++) {
         const c = original[i];
         const gi = starts[k] + i;
-        if (DASH_RE.test(c)) {
-          const kind = plan.get(gi) || 'standalone';
+        if (DASH_RE.test(c) && plan.has(gi)) {
+          const kind = plan.get(gi);
           const gp = gi > 0 ? full[gi - 1] : undefined;
           const gn = gi + 1 < full.length ? full[gi + 1] : undefined;
           if (kind === 'range') {
@@ -222,7 +265,8 @@
       nodes.push(n);
     }
     if (!nodes.length) return;
-    const cleaned = cleanMessageTexts(nodes.map(nd => nd.nodeValue));
+    const anchors = nodes.map(blockAnchor);
+    const cleaned = cleanMessageTexts(nodes.map(nd => nd.nodeValue), anchors);
     for (let i = 0; i < nodes.length; i++) {
       if (cleaned[i] !== nodes[i].nodeValue) nodes[i].nodeValue = cleaned[i];
     }
