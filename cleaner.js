@@ -1,3 +1,7 @@
+// v5.04: existing-chat support — when a whole message tree mounts at once
+//        (opening an old chat, chat switches), the childList mutation target
+//        sits at or above response-block and the role gate rejected it; the
+//        observer now also inspects added nodes for ai-response content.
 // v5.03: block-aware pairing — dashes in different paragraphs/headings/list
 //        items/table cells can no longer pair across block boundaries (the
 //        previous message-wide concat glued blocks together without sentence
@@ -307,7 +311,24 @@
       let el = mut.target;
       if (el.nodeType === Node.TEXT_NODE) el = el.parentElement;
       const msg = (el && el.getAttribute) ? findAssistantBlock(el) : null;
-      if (msg) schedule(msg);
+      if (msg) { schedule(msg); continue; }
+      // Whole message trees mounted at once (existing chats, chat switches):
+      // the insertion point sits at or above response-block, so the target
+      // chain never reaches ai-response. Look inside the added elements.
+      if (!mut.addedNodes) continue;
+      for (const add of mut.addedNodes) {
+        if (!add || add.nodeType !== Node.ELEMENT_NODE) continue;
+        const inners = [];
+        if (add.getAttribute && add.getAttribute('data-element-id') === AI_CONTENT_ID) inners.push(add);
+        if (add.querySelectorAll) {
+          const found = add.querySelectorAll('[data-element-id="' + AI_CONTENT_ID + '"]');
+          for (let q = 0; q < found.length; q++) inners.push(found[q]);
+        }
+        for (const inner of inners) {
+          const blk = findAssistantBlock(inner);
+          if (blk) schedule(blk);
+        }
+      }
     }
   });
 
